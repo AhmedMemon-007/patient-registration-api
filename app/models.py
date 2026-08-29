@@ -1,7 +1,7 @@
-from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional
 from datetime import date
 import re
+from pydantic import BaseModel, EmailStr, field_validator, model_validator
 
 US_STATES = {"AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN",
 "IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
@@ -9,6 +9,15 @@ US_STATES = {"AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","I
 "WA","WV","WI","WY","DC"}
 
 ALLOWED_SEX_VALUES = {"Male", "Female", "Other", "Decline to Answer"}
+
+# Optional fields where an LLM/voice agent may send "" instead of omitting
+# the field entirely. These get normalized to None before validation runs,
+# so Optional[...] fields don't reject an empty string as invalid input.
+OPTIONAL_STRING_FIELDS = {
+    "email", "address_line_2", "insurance_provider",
+    "insurance_member_id", "emergency_contact_name",
+    "emergency_contact_phone", "preferred_language"
+}
 
 
 class PatientCreate(BaseModel):
@@ -28,6 +37,15 @@ class PatientCreate(BaseModel):
     preferred_language: Optional[str] = "English"
     emergency_contact_name: Optional[str] = None
     emergency_contact_phone: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def blank_strings_to_none(cls, data):
+        if isinstance(data, dict):
+            for field in OPTIONAL_STRING_FIELDS:
+                if field in data and data[field] == "":
+                    data[field] = None
+        return data
 
     @field_validator("first_name", "last_name")
     @classmethod
@@ -101,6 +119,15 @@ class PatientUpdate(BaseModel):
     preferred_language: Optional[str] = None
     emergency_contact_name: Optional[str] = None
     emergency_contact_phone: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def blank_strings_to_none(cls, data):
+        if isinstance(data, dict):
+            for field in OPTIONAL_STRING_FIELDS:
+                if field in data and data[field] == "":
+                    data[field] = None
+        return data
 
     @field_validator("first_name", "last_name")
     @classmethod
