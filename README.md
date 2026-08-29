@@ -1,206 +1,134 @@
-# Patient Registration API
+# Voice AI Patient Registration System
 
-A small REST API for registering, looking up, updating, and soft-deleting patient
-records, built with **FastAPI**, **Pydantic**, and **SQLite**.
+A voice-based AI agent that answers a real phone call, conversationally
+registers a new patient, persists the record to a database, and exposes it
+through a REST API and a simple web dashboard.
 
----
+## Live Demo
 
-## Features
+- **Phone number:** +1 (863) 758 9028
+- **API base URL:** https://web-production-6c593.up.railway.app
+- **Interactive API docs (Swagger):** https://web-production-6c593.up.railway.app/docs
+- **Dashboard:** https://web-production-6c593.up.railway.app/dashboard
+- **Repository:** https://github.com/AhmedMemon-007/patient-registration-api
 
-- Create, read, update, and soft-delete patient records
-- Field-level validation (name format, DOB, US phone numbers, US state codes,
-  ZIP codes, allowed `sex` values, email format)
-- Consistent `{ "data": ..., "error": ... }` response envelope on every endpoint
-- Duplicate-registration guard (rejects a new patient if the phone number is
-  already registered)
-- Soft delete — records are flagged with `deleted_at` rather than removed, so
-  history is preserved
-- SQLite storage with no external database server required
+No credentials are required to test the API or dashboard — both are public,
+read-friendly endpoints with server-side input validation on writes.
 
----
-
-## Tech Stack
-
-| Layer | Tool |
-|---|---|
-| Web framework | [FastAPI](https://fastapi.tiangolo.com/) |
-| Server | [Uvicorn](https://www.uvicorn.org/) |
-| Validation | [Pydantic v2](https://docs.pydantic.dev/) (+ `email-validator`) |
-| Database | SQLite (via the standard library `sqlite3`) |
-
----
-
-## Project Structure
+## Architecture
 
 ```
-C_cloud/
-├── myenv/                 # virtual environment (not committed)
-├── patients.db            # SQLite database file (created on first run)
-└── app/
-    ├── main.py             # FastAPI app + route definitions
-    ├── models.py           # Pydantic request/response models & validation
-    ├── crud.py              # Database read/write functions
-    ├── db.py                 # SQLite connection + schema initialization
-    ├── schema.sql            # Table definition
-    ├── requirements.txt      # Python dependencies
-    └── README.md
+Caller (phone)
+    │
+    ▼
+Vapi (telephony + STT + TTS + LLM)
+    │  tool calls: find_patient_by_phone, create_patient, end_call_tool
+    ▼
+FastAPI REST API  (Railway, persistent volume)
+    │
+    ▼
+SQLite database (patients.db)
 ```
 
-> `patients.db` is created one directory **above** `app/`, at the project root
-> (`C_cloud/patients.db`), the first time the app starts — see `db.py`.
+The voice agent (built on Vapi) handles the phone call, speech-to-text,
+text-to-speech, and conversation logic via an LLM. It calls two custom
+tools that hit this project's own REST API to check for existing patients
+and persist new registrations, plus a built-in tool to hang up the call
+once registration is complete.
 
----
+## Tech Stack & Why
 
-## Setup
+- **Vapi** — handles telephony, STT/TTS, and phone number provisioning, so
+  effort went into prompt engineering and backend integration rather than
+  building voice infrastructure from scratch.
+- **FastAPI** — fast to write, built-in request validation via Pydantic,
+  matches the required JSON envelope (`{"data": ..., "error": ...}`) and
+  proper HTTP status codes with minimal boilerplate.
+- **SQLite** — zero-setup, file-based, persists via a mounted Railway
+  volume. Sufficient for this scope; would migrate to Postgres for
+  concurrent multi-caller production use.
+- **Railway** — simple GitHub-connected deploys with persistent volumes,
+  used to host the API and back it with a durable SQLite file.
 
-### 1. Create and activate a virtual environment
+## Data Model
 
-Create it at the **project root** (`C_cloud/`), not inside `app/`:
+All fields from the standard US patient demographic dataset are supported,
+with server-side validation independent of whatever the voice agent
+already checked (name format, DOB not in the future, valid US state, 10-digit
+phone numbers, 5-digit/ZIP+4 zip codes, `sex` restricted to a fixed enum,
+etc.). Optional fields left blank by the caller are correctly normalized
+from empty strings to `null` server-side.
 
-```powershell
-cd C:\Users\Admin\Desktop\C_cloud
-python -m venv myenv
-myenv\Scripts\activate
-```
+## REST API
 
-### 2. Install dependencies
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/patients` | List all patients. Supports `?last_name=`, `?date_of_birth=`, `?phone_number=` |
+| GET | `/patients/:id` | Retrieve a single patient by UUID |
+| POST | `/patients` | Create a new patient |
+| PUT | `/patients/:id` | Partial update of an existing patient |
+| DELETE | `/patients/:id` | Soft-delete (sets `deleted_at`, does not hard-delete) |
 
-```powershell
+All responses use the envelope `{ "data": ..., "error": ... }` with proper
+HTTP status codes (200, 201, 404, 422, 500).
+
+## Voice Agent Design
+
+The system prompt (full text in `docs/system_prompt.txt` in this repo)
+directs the agent to:
+
+- Collect required fields conversationally, in natural groupings — never
+  reading a form list.
+- Check `find_patient_by_phone` early in the call and offer to update an
+  existing record if the caller is a returning patient.
+- Offer optional fields (insurance, emergency contact, preferred language)
+  once, letting the caller opt in rather than asking about each one.
+- Read back a full summary and get explicit confirmation before saving.
+- Re-prompt for just the affected field on corrections or invalid input
+  (e.g. an invalid date of birth), rather than restarting the whole call.
+- Call `create_patient` only after confirmation, then use `end_call_tool`
+  to hang up gracefully with a closing line.
+- On a failed save, tell the caller plainly and offer a callback number or
+  a retry, rather than leaving dead air.
+
+## Setup (local development)
+
+```bash
 cd app
-pip install -r requirements.txt
+pip install -r ../requirements.txt
+uvicorn main:app --reload --port 8000
 ```
 
-### 3. Run the server
+Visit `http://127.0.0.1:8000/docs` to test the API locally. Note: locally,
+`patients.db` is written next to the `app/` folder; on Railway it's written
+to `/data/patients.db` on a mounted persistent volume (see `app/db.py`).
 
-From inside the `app/` folder:
+## Environment Variables
 
-```powershell
-uvicorn main:app --reload
-```
-
-The API will be available at:
-
-- **Base URL:** http://127.0.0.1:8000
-- **Interactive docs (Swagger UI):** http://127.0.0.1:8000/docs
-- **Alternative docs (ReDoc):** http://127.0.0.1:8000/redoc
-
-> The database and its table are created automatically on startup
-> (`init_db()` runs `schema.sql` on the `startup` event) — no manual
-> migration step is needed.
-
----
-
-## API Reference
-
-All responses are wrapped in an envelope:
-
-```json
-{ "data": ..., "error": ... }
-```
-
-Exactly one of `data` / `error` will be non-null.
-
-### `GET /patients`
-
-List patients, optionally filtered.
-
-**Query parameters** (all optional):
-
-| Param | Type |
-|---|---|
-| `last_name` | string |
-| `date_of_birth` | string (`YYYY-MM-DD`) |
-| `phone_number` | string |
-
-```bash
-curl "http://127.0.0.1:8000/patients?last_name=Smith"
-```
-
-### `GET /patients/{patient_id}`
-
-Fetch a single patient by ID. Returns `404` if not found or soft-deleted.
-
-```bash
-curl "http://127.0.0.1:8000/patients/<patient_id>"
-```
-
-### `POST /patients`
-
-Create a new patient. Returns `201` on success, `422` on validation error,
-`409` if the phone number is already registered.
-
-**Required fields:** `first_name`, `last_name`, `date_of_birth`, `sex`,
-`phone_number`, `address_line_1`, `city`, `state`, `zip_code`
-
-**Optional fields:** `email`, `address_line_2`, `insurance_provider`,
-`insurance_member_id`, `preferred_language` (default `"English"`),
-`emergency_contact_name`, `emergency_contact_phone`
-
-```bash
-curl -X POST "http://127.0.0.1:8000/patients" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "first_name": "Jane",
-    "last_name": "Doe",
-    "date_of_birth": "1990-05-14",
-    "sex": "Female",
-    "phone_number": "555-123-4567",
-    "address_line_1": "123 Main St",
-    "city": "Springfield",
-    "state": "IL",
-    "zip_code": "62704"
-  }'
-```
-
-### `PUT /patients/{patient_id}`
-
-Partially update a patient. Only send the fields you want to change. Same
-validation rules as `POST`. Returns `404` if the patient doesn't exist.
-
-```bash
-curl -X PUT "http://127.0.0.1:8000/patients/<patient_id>" \
-  -H "Content-Type: application/json" \
-  -d '{"phone_number": "555-999-8888"}'
-```
-
-### `DELETE /patients/{patient_id}`
-
-Soft-deletes a patient (sets `deleted_at`; the row is kept, not removed).
-Returns `404` if the patient doesn't exist or is already deleted.
-
-```bash
-curl -X DELETE "http://127.0.0.1:8000/patients/<patient_id>"
-```
-
----
-
-## Validation Rules
-
-| Field | Rule |
-|---|---|
-| `first_name`, `last_name` | 1–50 letters, spaces, hyphens, or apostrophes |
-| `date_of_birth` | Cannot be in the future |
-| `sex` | One of `Male`, `Female`, `Other`, `Decline to Answer` |
-| `phone_number`, `emergency_contact_phone` | Must contain exactly 10 digits (formatting characters are stripped automatically) |
-| `state` | Valid 2-letter US state/DC abbreviation |
-| `zip_code` | 5-digit or ZIP+4 format (`12345` or `12345-6789`) |
-| `email` | Valid email format |
-
----
+None are required to run the API itself. The Vapi assistant configuration
+(system prompt, tools, phone number) is managed entirely in the Vapi
+dashboard and is not part of this repository's runtime config.
 
 ## Known Limitations
 
-- **No authentication.** Every endpoint is open, including ones that return
-  full patient PII. Do not deploy this beyond local development without
-  adding an auth layer (API key, OAuth, etc.).
-- **SQLite only.** Fine for local dev/small deployments; a concurrent
-  multi-user production setup would need a proper server-backed database
-  (e.g. PostgreSQL).
-- **No `UNIQUE` constraint on `phone_number` at the database level** — the
-  duplicate check happens in the application layer only.
+- No HIPAA compliance (explicitly out of scope per the assessment brief;
+  no real patient data is stored).
+- SQLite is not safe for concurrent writes at scale — fine for a single
+  phone line, would need Postgres for a real multi-line deployment.
+- No retry/queue if the `create_patient` tool call fails mid-call; the
+  agent surfaces the failure to the caller instead of silently dropping it.
+- The dashboard is a minimal read-only table (no auth, no pagination) —
+  intentionally simple given the assessment's time constraints.
+- Insurance and emergency contact fields are stored as free text without
+  additional format validation.
 
----
+## Next Steps
 
-## License
-
-Internal / educational project — no license specified.
+- Migrate to Postgres for concurrent-safe production use.
+- Store per-call transcripts linked to the patient record.
+- Add multi-language support (the system prompt currently handles English
+  conversations only).
+- Add automated tests for the API layer (unit tests for validators, CRUD,
+  and endpoint status codes).
+- Add basic auth or an API key to the dashboard and write endpoints before
+  any real deployment beyond this assessment.
