@@ -77,8 +77,6 @@ DASHBOARD_HTML = """
   .refresh { background: #2563eb; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
   .refresh:hover { background: #1d4ed8; }
   .top { display: flex; justify-content: space-between; align-items: center; }
-  .pid { font-family: monospace; font-size: 12px; color: #7f8794; cursor: pointer; }
-  .pid:hover { color: #e6e6e6; }
 </style>
 </head>
 <body>
@@ -105,7 +103,6 @@ async function loadPatients() {
     }
     let rows = patients.map(p => `
       <tr>
-        <td class="pid" title="${p.patient_id}" onclick="navigator.clipboard.writeText('${p.patient_id}')">${p.patient_id.slice(0, 8)}...</td>
         <td>${p.first_name} ${p.last_name}</td>
         <td>${p.date_of_birth}</td>
         <td>${p.sex}</td>
@@ -118,7 +115,7 @@ async function loadPatients() {
       <table>
         <thead>
           <tr>
-            <th>Patient ID</th><th>Name</th><th>DOB</th><th>Sex</th><th>Phone</th><th>Location</th><th>Registered</th>
+            <th>Name</th><th>DOB</th><th>Sex</th><th>Phone</th><th>Location</th><th>Registered</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
